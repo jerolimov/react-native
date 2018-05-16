@@ -15,11 +15,12 @@ const NativeEventEmitter = require('NativeEventEmitter');
 const RCTNetworkingNative = require('NativeModules').Networking;
 const convertRequestBody = require('convertRequestBody');
 
-import type {RequestBody} from 'convertRequestBody';
+import type { RequestBody } from 'convertRequestBody';
 
-import type {NativeResponseType} from './XMLHttpRequest';
+import type { RequestRedirect, NativeResponseType } from './XMLHttpRequest';
 
 class RCTNetworking extends NativeEventEmitter {
+
   isAvailable: boolean = true;
 
   constructor() {
@@ -31,6 +32,7 @@ class RCTNetworking extends NativeEventEmitter {
     trackingName: string,
     url: string,
     headers: Object,
+    redirect: RequestRedirect,
     data: RequestBody,
     responseType: NativeResponseType,
     incrementalUpdates: boolean,
@@ -45,6 +47,7 @@ class RCTNetworking extends NativeEventEmitter {
         url,
         data: {...body, trackingName},
         headers,
+        redirect,
         responseType,
         incrementalUpdates,
         timeout,

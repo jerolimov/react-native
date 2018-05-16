@@ -17,6 +17,7 @@
 #import <React/RCTURLRequestHandler.h>
 #import <React/RCTUtils.h>
 
+#import "RCTHTTPRequest.h"
 #import "RCTHTTPRequestHandler.h"
 
 typedef RCTURLRequestCancellationBlock (^RCTHTTPQueryResult)(NSError *error, NSDictionary<NSString *, id> *result);
@@ -231,24 +232,8 @@ RCT_EXPORT_MODULE()
 {
   RCTAssertThread(_methodQueue, @"buildRequest: must be called on method queue");
 
-  NSURL *URL = [RCTConvert NSURL:query[@"url"]]; // this is marked as nullable in JS, but should not be null
-  NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:URL];
-  request.HTTPMethod = [RCTConvert NSString:RCTNilIfNull(query[@"method"])].uppercaseString ?: @"GET";
+  RCTHTTPRequest *request = [[RCTHTTPRequest alloc] initWithQuery: query];
 
-  // Load and set the cookie header.
-  NSArray<NSHTTPCookie *> *cookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookiesForURL:URL];
-  request.allHTTPHeaderFields = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
-
-  // Set supplied headers.
-  NSDictionary *headers = [RCTConvert NSDictionary:query[@"headers"]];
-  [headers enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
-    if (value) {
-      [request addValue:[RCTConvert NSString:value] forHTTPHeaderField:key];
-    }
-  }];
-
-  request.timeoutInterval = [RCTConvert NSTimeInterval:query[@"timeout"]];
-  request.HTTPShouldHandleCookies = [RCTConvert BOOL:query[@"withCredentials"]];
   NSDictionary<NSString *, id> *data = [RCTConvert NSDictionary:RCTNilIfNull(query[@"data"])];
   NSString *trackingName = data[@"trackingName"];
   if (trackingName) {
@@ -256,6 +241,7 @@ RCT_EXPORT_MODULE()
                         forKey:@"trackingName"
                      inRequest:request];
   }
+
   return [self processDataForHTTPQuery:data callback:^(NSError *error, NSDictionary<NSString *, id> *result) {
     if (error) {
       RCTLogError(@"Error processing request body: %@", error);
@@ -484,11 +470,11 @@ RCT_EXPORT_MODULE()
   };
 
   RCTURLRequestResponseBlock responseBlock = ^(NSURLResponse *response) {
-    NSDictionary<NSString *, NSString *> *headers;
+    NSDictionary<NSString *, id> *headers;
     NSInteger status;
     if ([response isKindOfClass:[NSHTTPURLResponse class]]) { // Might be a local file request
       NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
-      headers = httpResponse.allHeaderFields ?: @{};
+      headers = [weakSelf extractHeadersFromResponse: httpResponse];
       status = httpResponse.statusCode;
     } else {
       headers = response.MIMEType ? @{@"Content-Type": response.MIMEType} : @{};
@@ -578,6 +564,63 @@ RCT_EXPORT_MODULE()
   }
 
   [task start];
+}
+
+- (NSDictionary<NSString *, id> *)extractHeadersFromResponse:(NSHTTPURLResponse *)httpResponse
+{
+  NSDictionary<NSString *, id> *headers = httpResponse.allHeaderFields ?: @{};
+
+  // If we have no Set-Header here, we are ready.
+  if (![headers objectForKey:@"Set-Cookie"]) {
+    return headers;
+  }
+
+  // Otherwise we want to extract the different Set-Cookie headers into an array.
+  // Multiple Set-Cookie headers was automatically merged in NSHTTPURLResponse
+  // and could be extracted by NSHTTPCookie.
+  NSArray<NSHTTPCookie *> *cookies = [NSHTTPCookie cookiesWithResponseHeaderFields:headers forURL:httpResponse.URL];
+
+  NSMutableDictionary *headersWithCookies = [headers mutableCopy];
+  NSMutableArray<NSString *> *cookieHeaders = [NSMutableArray array];
+
+  for (NSHTTPCookie *cookie in cookies) {
+    // Re-format the NSHTTPCookie into a 'Set-String' header:
+    NSMutableString *cookieHeader = [NSMutableString string];
+    [cookieHeader appendString:cookie.name];
+    [cookieHeader appendString:@"="];
+    [cookieHeader appendString:cookie.value];
+
+    if (cookie.domain) {
+      [cookieHeader appendString:@"; Domain="];
+      [cookieHeader appendString:cookie.domain];
+    }
+
+    if (cookie.expiresDate) {
+      NSDateFormatter *dateFormatter = [NSDateFormatter new];
+      dateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+      dateFormatter.dateFormat = @"EEE, dd-MMM-yyyy HH:mm:ss zzz";
+      [cookieHeader appendString:@"; expires="];
+      [cookieHeader appendString:[dateFormatter stringFromDate:cookie.expiresDate]];
+    }
+
+    if (cookie.HTTPOnly) {
+      [cookieHeader appendString:@"; httponly"];
+    }
+
+    if (cookie.expiresDate) {
+      [cookieHeader appendFormat:@"; Max-Age=%i", (int) [cookie.expiresDate timeIntervalSinceDate:[NSDate date]]];
+    }
+
+    if (cookie.path) {
+      [cookieHeader appendString:@"; Path="];
+      [cookieHeader appendString:cookie.path];
+    }
+
+    [cookieHeaders addObject:cookieHeader];
+  }
+
+  [headersWithCookies setValue:cookieHeaders forKey:@"Set-Cookie"];
+  return headersWithCookies;
 }
 
 #pragma mark - Public API

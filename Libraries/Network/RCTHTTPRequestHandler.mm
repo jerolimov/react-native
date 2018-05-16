@@ -5,10 +5,12 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#import "RCTHTTPRequestHandler.h"
-
 #import <mutex>
 
+#import <React/RCTUtils.h>
+
+#import "RCTHTTPRequest.h"
+#import "RCTHTTPRequestHandler.h"
 #import "RCTNetworking.h"
 
 @interface RCTHTTPRequestHandler () <NSURLSessionDataDelegate>
@@ -143,6 +145,32 @@ didReceiveResponse:(NSURLResponse *)response
     [_delegates removeObjectForKey:task];
   }
   [delegate URLRequest:task didCompleteWithError:error];
+}
+
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+        newRequest:(NSURLRequest *)request
+ completionHandler:(void (^)(NSURLRequest *))completionHandler {
+  id<RCTURLRequestDelegate> delegate;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    delegate = [_delegates objectForKey:task];
+  }
+
+  if ([response isKindOfClass:[RCTHTTPRequest class]]) {
+    RCTHTTPRequest *httpResponse = (RCTHTTPRequest *)response;
+    if (httpResponse.redirect == RCTURLRequestRedirectError && delegate) {
+      NSError *error = RCTErrorWithMessage(@"Network error: Redirect is not allowed.");
+      [delegate URLRequest:task didCompleteWithError:error];
+      return;
+    } else if (httpResponse.redirect == RCTURLRequestRedirectManual) {
+      completionHandler(nil);
+      return;
+    }
+  }
+
+  completionHandler(request);
 }
 
 @end

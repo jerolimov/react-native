@@ -24,6 +24,7 @@ const invariant = require('fbjs/lib/invariant');
 const warning = require('fbjs/lib/warning');
 const BlobManager = require('BlobManager');
 
+export type RequestRedirect = 'follow' | 'error' | 'manual';
 export type NativeResponseType = 'base64' | 'blob' | 'text';
 export type ResponseType =
   | ''
@@ -133,6 +134,7 @@ class XMLHttpRequest extends EventTarget(...XHR_EVENTS) {
   _cachedResponse: Response;
   _hasError: boolean = false;
   _headers: Object;
+  _redirect: RequestRedirect = 'follow';
   _lowerCaseResponseHeaders: Object;
   _method: ?string = null;
   _response: string | ?Object;
@@ -521,6 +523,7 @@ class XMLHttpRequest extends EventTarget(...XHR_EVENTS) {
       this._trackingName,
       this._url,
       this._headers,
+      this._redirect,
       data,
       nativeResponseType,
       incrementalEvents,
